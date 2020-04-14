@@ -4,9 +4,12 @@ import sys
 import traceback
 from os import path
 import psycopg2
+import qgis.utils
 from PyQt4 import QtSql
+from PyQt4.QtCore import *
+from qgis.core import QgsProject
 from qgis.core import *
-from qgis.core import QgsVectorLayer, QgsDataSourceURI,QgsMapLayerRegistry
+from qgis.core import QgsVectorLayer, QgsDataSourceURI,QgsMapLayerRegistry, QgsFeature
 from config.db_conn import GetDBConnFromConfigFile
 from config.command_line import GetArgsFromCommandLine
 
@@ -24,14 +27,15 @@ class DataOperationQGISToPostgres(self):
 		self.port = self.get_arguments['port']
 		self.host = self.get_arguments['host']
 		self.database = self.get_argumentsp['dbname']
+		self.uri = QgsDataSourceURI()
 
 	def import_from_postgres(self):
 		try:
 			#QgsDataSourceURI Automatically load the QGIS layer in canvas
-			uri = QgsDataSourceURI()
-			uri.setConnection(self.host, self.port, self.database, self.user, self.password)
-			uri.setDataSource ("UGRoute", "Duct",,"Chamber", "geom")
-			vlayer = QgsVectorLayer(uri.uri() ,"Duct", self.user)
+			self.uri = QgsDataSourceURI()
+			self.uri.setConnection(self.host, self.port, self.database, self.user, self.password)
+			self.uri.setDataSource ("UGRoute", "Duct",,"Chamber", "geom")
+			vlayer = QgsVectorLayer(self.uri.uri() ,"Duct", self.user)
 		    return vlayer
 		except:
 			LOGGER.info(str(traceback.format_exception(*sys.exc_info())))
@@ -39,13 +43,32 @@ class DataOperationQGISToPostgres(self):
 	def read_attribute_from_postgres(self):
 		try:
 			sql = "(select UGRoute as ug_route_line, Duct as duct_line, Chamber as chamber_point, geom from {0})".format(str(database))
-			uri = QgsDataSourceURI()
-			uri.setConnection(self.host, self.port, self.database, self.user, self.password)
-			uri.setDataSource('public', self.database, 'geom', '4326')
-			vlayer = QgsVectorLayer(uri.uri(),self.user)
+			self.uri.setConnection(self.host, self.port, self.database, self.user, self.password)
+			self.uri.setDataSource('public', self.database, 'geom', '4326')
+			vlayer = QgsVectorLayer(self.uri.uri(),self.user)
 			QgsMapLayerRegistry.instance().addMapLayer(vlayer)
 		except:
 			LOGGER.info(str(traceback.format_exception(*sys.exc_info())))
+
+	def create_and_write_data_in_qgis_window(self):
+		try:
+			self.read_attribute_from_postgres()
+			# load provider
+			QgsApplication.initQgis()
+			qgis.utils.iface
+			# set active layer
+			clayer = qgis.utils.iface.activeLayer()
+			provider = clayer.dataProvider()
+			# start editing mode
+			clayer.startEditing()
+			# add new fields
+			caps = provider.capabilities()
+			if caps & QgsVectorDataProvider.AddAttributes:
+    			res = provider.addAttributes([QgsField("ug_route_line", QVariant.Int), QgsField("duct_line", QVariant.Int)])
+    		self.insert_into_postgres()
+		except:
+			LOGGER.info(str(traceback.format_exception(*sys.exc_info())))
+
 
 	def insert_into_postgres(self):
 		try:
